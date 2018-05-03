@@ -1,17 +1,13 @@
 import React from 'react'
-import { initPeerConnection } from './utils/webrtc-utils'
 import { WebRtcPeer } from 'kurento-utils'
 const WEBSOCKET_URL = 'wss://192.168.18.26:8890/call'
 const socket = new WebSocket(WEBSOCKET_URL)
 
-
-
-let pc = null
 let container = null
 
 let rtcPeer = null
 
-let sdpOffer = null
+let savedSdpOffer = null
 
 let caller = ''
 let callee = ''
@@ -34,15 +30,13 @@ socket.onmessage = msg => {
 
   switch (message.id) {
     case 'iceCandidate':
-      // if (!message.candidate) return
-      // pc.addIceCandidate(new RTCIceCandidate(message.candidate))
       rtcPeer.addIceCandidate(message.candidate, err => {
-        if (err) return console.error('Error adding candidate: ', error)
+        if (err) return console.error('Error adding candidate: ', err)
       })
       break
     case 'incomingCall':
       // 保存sdp 设置接收状态
-      sdpOffer = message.sdpOffer
+      savedSdpOffer = message.sdpOffer
       container.setState({ incoming: true })
       caller = message.from
       callee = message.to
@@ -54,9 +48,13 @@ socket.onmessage = msg => {
           return console.error(err)
         }
         container.setState({
-          sender: URL.createObjectURL(rtcPeer.getLocalStream()),
-          receiver: URL.createObjectURL(rtcPeer.getRemoteStream())
+          sender: rtcPeer.getLocalStream(),
+          receiver: rtcPeer.getRemoteStream()
         })
+        setTimeout(() => {
+          container.sender.current.srcObject = container.state.sender
+          container.receiver.current.srcObject = container.state.receiver
+        }, 0);
       })
       break
     default: 
@@ -77,9 +75,8 @@ function onIceCandidate (candidate) {
     id: 'onIceCandidate',
     candidate: candidate
   }
-  sendMeseage(message)
+  sendMessage(message)
 }
-
 
 export default class Communicate extends React.Component {
   state = {
@@ -87,8 +84,11 @@ export default class Communicate extends React.Component {
     to: '',
     incoming: false,
     sender: null,
-    reciver: null
+    receiver: null
   }
+
+  sender = React.createRef()
+  receiver = React.createRef()
 
   componentDidMount () {
     container = this
@@ -111,7 +111,7 @@ export default class Communicate extends React.Component {
         to: this.state.to, 
         sdpOffer: offerSdp
       }
-      sendMeseage(message)
+      sendMessage(message)
     }
     rtcPeer = WebRtcPeer.WebRtcPeerSendrecv(rtcPeerConfig, err => {
       if (err) return console.error(err)
@@ -127,21 +127,29 @@ export default class Communicate extends React.Component {
   }
 
   _handleAcceptBtnClick = e => {
-    const onOffer = (err, offerSdp) => {
-      if (error) {
-        return console.error('Error generating the offer', error)
+    const sendAnswer = (err, sdpAnswer) => {
+      if (err) {
+        return console.error('Error generating the offer', err)
       }
       let message = { 
         id: 'incomingCallResponse',
         from: caller,
         callResponse: 'accept',
-        sdpOffer: offerSdp
+        sdpAnswer: sdpAnswer
       }
       sendMessage(message)
+      this.setState({
+        sender: rtcPeer.getLocalStream(),
+        receiver: rtcPeer.getRemoteStream()
+      })
+      setTimeout(() => {
+        this.sender.current.srcObject = this.state.sender
+        this.receiver.current.srcObject = this.state.receiver
+      }, 0);
     }
     rtcPeer = new WebRtcPeer.WebRtcPeerSendrecv(rtcPeerConfig, err => {
       if (err) return console.error(err)
-      rtcPeer.generateOffer(onoffer)
+      rtcPeer.processOffer(savedSdpOffer, sendAnswer)
     })
     
   }
@@ -163,8 +171,8 @@ export default class Communicate extends React.Component {
         <button onClick={this._handleAcceptBtnClick}>Accept</button>
         {this.state.incoming ? <h1>incoming</h1> : null}
         <hr/>
-        <video id="sender" src={this.state.sender}  autoPlay style={styles.video}></video>
-        <video id="reciver" src={this.state.reciver} autoPlay style={styles.video}></video>
+        <video id="sender" ref={this.sender}  autoPlay style={styles.video}></video>
+        <video id="reciver" ref={this.receiver} autoPlay style={styles.video}></video>
       </div>
     )
   }
