@@ -1,12 +1,32 @@
 import React from 'react'
 import { initPeerConnection } from './utils/webrtc-utils'
-
+import { WebRtcPeer } from 'kurento-utils'
 const WEBSOCKET_URL = 'wss://192.168.18.26:8890/call'
 const socket = new WebSocket(WEBSOCKET_URL)
 
 
+
 let pc = null
 let container = null
+
+let rtcPeer = null
+
+let sdpOffer = null
+
+let caller = ''
+let callee = ''
+
+const rtcPeerConfig = {
+  onicecandidate: onIceCandidate,
+  mediaConstraints: {
+    audio: true,
+    video: {
+      width: 640,
+      framerate: 15
+    }
+  }
+}
+
 
 socket.onmessage = msg => {
   console.log('接收到消息: ', msg.data)
@@ -14,31 +34,29 @@ socket.onmessage = msg => {
 
   switch (message.id) {
     case 'iceCandidate':
-      if (!message.candidate) return
-      pc.addIceCandidate(new RTCIceCandidate(message.candidate))
-      break
-    case 'incomingCall':
-      pc = initPeerConnection({ onicecandidate })
-      var options = {
-        type: 'offer',
-        sdp: message.sdpOffer
-      }
-      pc.setRemoteDescription(new RTCSessionDescription(options)).then(() => {
-        console.log(pc.getRemoteStreams())
-        // container.refs['reciver'].srcObject = pc.getRemoteStreams()[0]
-        container.setState({ reciver: URL.createObjectURL(pc.getRemoteStreams()[0])})
+      // if (!message.candidate) return
+      // pc.addIceCandidate(new RTCIceCandidate(message.candidate))
+      rtcPeer.addIceCandidate(message.candidate, err => {
+        if (err) return console.error('Error adding candidate: ', error)
       })
       break
+    case 'incomingCall':
+      // 保存sdp 设置接收状态
+      sdpOffer = message.sdpOffer
+      container.setState({ incoming: true })
+      caller = message.from
+      callee = message.to
+      break
     case 'callResponse':
-      var options = {
-        type: 'answer',
-        sdp: message.sdpAnswer
-      }
-      let answer = new RTCSessionDescription(options)
-
-      pc.setRemoteDescription(answer).then(() => {
-        console.log(pc.getRemoteStreams())
-        container.setState({ reciver: URL.createObjectURL(pc.getRemoteStreams()[0]) })
+      // 处理返回的结果
+      rtcPeer.processAnswer(message.sdpAnswer, err => {
+        if (err) {
+          return console.error(err)
+        }
+        container.setState({
+          sender: URL.createObjectURL(rtcPeer.getLocalStream()),
+          receiver: URL.createObjectURL(rtcPeer.getRemoteStream())
+        })
       })
       break
     default: 
@@ -53,15 +71,14 @@ function sendMessage (msg) {
   socket.send(JSON.stringify(msg))
 }
 
-function onicecandidate ({candidate}) {
-  console.log(candidate)
-  if(!candidate) return
-  sendMessage({
+
+function onIceCandidate (candidate) {
+  let message = {
     id: 'onIceCandidate',
     candidate: candidate
-  })
+  }
+  sendMeseage(message)
 }
-
 
 
 export default class Communicate extends React.Component {
@@ -84,39 +101,21 @@ export default class Communicate extends React.Component {
     this.setState({to: e.target.value})
   }
   _handleCallBtnClick = e => {
+    const onOfferCall = (err, offerSdp) => {
+      if (err) return console.error('Error generating the offer', err)
+      console.log('Invoking SDP offer callback function')
 
-    pc = initPeerConnection({
-      onicecandidate
-    })
-
-    navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: true
-    }).then(stream => {
-      // 获取本地流后  创建offer
-      this.setState({ sender: URL.createObjectURL(stream) })
-      let createOfferOptions = {
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: true
+      let message = { 
+        id: 'call', 
+        from: this.state.username, 
+        to: this.state.to, 
+        sdpOffer: offerSdp
       }
-      
-      stream.getTracks().forEach(track => pc.addTrack(track, stream))
-      pc.createOffer(createOfferOptions).then(offer => {
-        // 创建好offer 设置des
-        return pc.setLocalDescription(offer)
-      }).then(() => {
-        // 设置好des后 从des里去到offersdp
-        let offerSdp = pc.localDescription.sdp
-        // 发送播叫信息  连同 offersdp一起发送，  然后等着监听到 callResponse
-        sendMessage({
-          id: 'call',
-          from: this.state.username,
-          to: this.state.to,
-          sdpOffer: offerSdp
-        })
-      }).catch(err => {
-        console.log(err)
-      })
+      sendMeseage(message)
+    }
+    rtcPeer = WebRtcPeer.WebRtcPeerSendrecv(rtcPeerConfig, err => {
+      if (err) return console.error(err)
+      rtcPeer.generateOffer(onOfferCall)
     })
     
   }
@@ -128,36 +127,23 @@ export default class Communicate extends React.Component {
   }
 
   _handleAcceptBtnClick = e => {
-
-
+    const onOffer = (err, offerSdp) => {
+      if (error) {
+        return console.error('Error generating the offer', error)
+      }
+      let message = { 
+        id: 'incomingCallResponse',
+        from: caller,
+        callResponse: 'accept',
+        sdpOffer: offerSdp
+      }
+      sendMessage(message)
+    }
+    rtcPeer = new WebRtcPeer.WebRtcPeerSendrecv(rtcPeerConfig, err => {
+      if (err) return console.error(err)
+      rtcPeer.generateOffer(onoffer)
+    })
     
-    navigator.mediaDevices.getUserMedia({audio: true, video: true})
-      .then(stream => {
-        
-        let createAnswerOptions = {
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: true
-        }
-
-        // this.setState({sender: stream})
-        this.setState({sender: URL.createObjectURL(stream)})
-        stream.getTracks().forEach(track => pc.addTrack(track, stream))
-        pc.createAnswer(createAnswerOptions).then(answer => {
-          console.log(answer)
-          return pc.setLocalDescription(answer)
-        }).then(() => {
-          let answerSdp = pc.localDescription.sdp
-
-          sendMessage({
-            id: 'incomingCallResponse',
-            from: '2',
-            to: '1',
-            sdpAnswer: answerSdp
-          })
-        }).catch(err => {
-          console.error(err)
-        })
-      })
   }
 
 
