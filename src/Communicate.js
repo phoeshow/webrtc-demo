@@ -181,6 +181,8 @@ export default class Communicate extends React.Component {
 const styles = {
   video: {
     width: '200px',
-    height: 'auto'
+    height: 'auto',
+    border: '1px solid #ddd',
+    margin: '15px'
   }
 }
